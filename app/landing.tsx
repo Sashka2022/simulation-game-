@@ -18,11 +18,26 @@ import {
   LoaderCircle,
 } from "lucide-react";
 import { publicRoles, schools } from "../lib/content";
+import { responseJson } from "../lib/client-response";
 import { useDialogFocus } from "../lib/use-dialog-focus";
 export default function Landing() {
   const [mode, setMode] = useState<"host" | "join" | "recover" | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  const [liveAvailable, setLiveAvailable] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/status", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((s) => {
+        if (active) setLiveAvailable(s.liveAvailable === true);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
   const rememberFocus = useDialogFocus(mode !== null);
   function openMode(next: "host" | "join" | "recover") {
     rememberFocus();
@@ -31,12 +46,8 @@ export default function Landing() {
   useEffect(() => {
     const code = new URLSearchParams(location.search).get("join");
     if (code) {
+      setJoinCode(code);
       openMode("join");
-      setTimeout(() => {
-        const input =
-          document.querySelector<HTMLInputElement>("input[name=code]");
-        if (input) input.value = code;
-      }, 0);
     }
   }, []);
   async function submit(e: React.FormEvent<HTMLFormElement>) {
@@ -56,7 +67,7 @@ export default function Landing() {
           key: f.get("key"),
         }),
       });
-      const b = await res.json();
+      const b = await responseJson(res);
       if (!res.ok) throw Error(b.error);
       if (b.projector) sessionStorage.setItem("projector_" + b.id, b.projector);
       if (b.recovery) sessionStorage.setItem("recovery_" + b.id, b.recovery);
@@ -89,6 +100,12 @@ export default function Landing() {
         </nav>
       </header>
       <main id="main">
+        {liveAvailable === false && (
+          <div className="live-status-notice" role="status">
+            המשחק החי אינו זמין כרגע.{" "}
+            <a href="/room/demo">אפשר להתנסות במצב הדגמה</a>.
+          </div>
+        )}
         <section className="hero">
           <div className="hero-copy">
             <div className="eyebrow">
@@ -377,6 +394,7 @@ export default function Landing() {
                   <input
                     autoFocus
                     name="code"
+                    defaultValue={joinCode}
                     dir="ltr"
                     required
                     maxLength={6}

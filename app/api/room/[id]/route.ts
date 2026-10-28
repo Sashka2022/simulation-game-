@@ -1,13 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getRoom,
-  identify,
-  snapshot,
-  command,
-  rateLimit,
-} from "../../../../lib/store";
+import { readSnapshot, command, rateLimit } from "../../../../lib/store";
 import { error, originCheck } from "../../../../lib/http";
 export const runtime = "nodejs";
+export const maxDuration = 30;
 export const dynamic = "force-dynamic";
 export async function GET(
   req: NextRequest,
@@ -15,14 +10,13 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const r = getRoom(id);
     const credential = req.cookies.get("room_" + id)?.value || "";
-    const actor = identify(
-      r,
+    const result = await readSnapshot(
+      id,
       credential,
       req.headers.get("x-projector-token") || undefined,
     );
-    return NextResponse.json(snapshot(r, actor, credential), {
+    return NextResponse.json(result, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (e) {
@@ -36,7 +30,7 @@ export async function POST(
   try {
     originCheck(req);
     const { id } = await params;
-    rateLimit("room:" + id, 300);
+    await rateLimit("room:" + id, 300);
     const raw = await req.text();
     if (raw.length > 30000) throw Error("בקשה גדולה מדי");
     const b = JSON.parse(raw);
@@ -46,7 +40,7 @@ export async function POST(
       !Number.isInteger(b.revision)
     )
       throw Error("פקודה לא תקינה");
-    command(
+    await command(
       id,
       req.cookies.get("room_" + id)?.value || "",
       b.action,

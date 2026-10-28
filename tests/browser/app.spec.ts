@@ -170,7 +170,7 @@ test("live room: five isolated delegations, projector, concurrent updates and re
       },
     });
     expect((await teams[1].request.get("/api/room/" + room.id)).status()).toBe(
-      400,
+      404,
     );
   } finally {
     await Promise.all([host, ...teams, projection].map((c) => c.close()));
@@ -345,4 +345,198 @@ test("keyboard dialog closes with Escape and returns focus to its launcher", asy
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await expect(launch).toBeFocused();
+});
+
+test("seven live screens converge after offline recovery; revoked device loses private access", async ({
+  browser,
+}) => {
+  const host = await browser.newContext();
+  const teams = await Promise.all(
+    Array.from({ length: 5 }, () => browser.newContext()),
+  );
+  const projector = await browser.newContext();
+  const contexts = [host, ...teams, projector];
+  try {
+    const room = await (
+      await host.request.post("/api/session", {
+        data: { type: "create", name: "מפגש מלא בשבעה מסכים" },
+      })
+    ).json();
+    const url = "/api/room/" + room.id;
+    const read = async () => (await host.request.get(url)).json();
+    let s = await read();
+    const roles = ["MOE", "FIN", "UNION", "LOCAL", "PRINCIPALS"];
+    for (let i = 0; i < roles.length; i++) {
+      await teams[i].request.post("/api/session", {
+        data: { type: "join", code: s.code, role: roles[i] },
+      });
+      s = await read();
+      const r = s.requests.find((r: { role: string }) => r.role === roles[i]);
+      await host.request.post(url, {
+        data: {
+          commandId: crypto.randomUUID(),
+          revision: s.revision,
+          action: { type: "approve", memberId: r.id },
+        },
+      });
+    }
+    const hostPage = await host.newPage();
+    await hostPage.goto("/room/" + room.id);
+    const pages = await Promise.all(
+      teams.map(async (c) => {
+        const p = await c.newPage();
+        await p.goto("/room/" + room.id);
+        return p;
+      }),
+    );
+    const projection = await projector.newPage();
+    await projection.goto("/room/" + room.id + "#projector=" + room.projector);
+    s = await read();
+    await host.request.post(url, {
+      data: {
+        commandId: crypto.randomUUID(),
+        revision: s.revision,
+        action: { type: "start" },
+      },
+    });
+    for (const p of [...pages, projection])
+      await expect(
+        p.getByRole("heading", { name: "הבטחה אחת. מערכת שלמה." }),
+      ).toBeVisible({ timeout: 10000 });
+    await teams[1].setOffline(true);
+    s = await read();
+    await host.request.post(url, {
+      data: {
+        commandId: crypto.randomUUID(),
+        revision: s.revision,
+        action: { type: "advance" },
+      },
+    });
+    for (const p of [pages[0], pages[2], pages[3], pages[4], projection])
+      await expect(
+        p.getByRole("heading", { name: "גנבתן לנו את המורה" }),
+      ).toBeVisible({ timeout: 10000 });
+    await teams[1].setOffline(false);
+    await pages[1].reload();
+    await expect(
+      pages[1].getByRole("heading", { name: "גנבתן לנו את המורה" }),
+    ).toBeVisible();
+    await pages[0]
+      .getByRole("button", { name: "התפקיד שלנו", exact: true })
+      .click();
+    await pages[0].getByRole("button", { name: "מידע למשלחת בלבד" }).click();
+    await expect(
+      pages[0].getByText("אישור משרות אינו מבטיח מורות זמינות ומתאימות."),
+    ).toBeVisible();
+    s = await read();
+    await host.request.post(url, {
+      data: {
+        commandId: crypto.randomUUID(),
+        revision: s.revision,
+        action: { type: "revoke", role: "MOE" },
+      },
+    });
+    await expect(
+      pages[0].getByText("אישור משרות אינו מבטיח מורות זמינות ומתאימות."),
+    ).not.toBeVisible({ timeout: 10000 });
+    expect(
+      (await (await host.request.get("/api/status")).json()).liveAvailable,
+    ).toBeTruthy();
+    s = await read();
+    await host.request.post(url, {
+      data: {
+        commandId: crypto.randomUUID(),
+        revision: s.revision,
+        action: { type: "delete" },
+      },
+    });
+  } finally {
+    await Promise.all(contexts.map((c) => c.close()));
+  }
+});
+
+test("a lost command response retries the same operation without a duplicate proposal", async ({
+  browser,
+}) => {
+  const host = await browser.newContext(),
+    team = await browser.newContext();
+  try {
+    const room = await (
+      await host.request.post("/api/session", {
+        data: { type: "create", name: "בדיקת ניסיון חוזר" },
+      })
+    ).json();
+    const url = "/api/room/" + room.id;
+    let s = await (await host.request.get(url)).json();
+    await team.request.post("/api/session", {
+      data: { type: "join", code: s.code, role: "MOE" },
+    });
+    s = await (await host.request.get(url)).json();
+    await host.request.post(url, {
+      data: {
+        commandId: crypto.randomUUID(),
+        revision: s.revision,
+        action: { type: "approve", memberId: s.requests[0].id },
+      },
+    });
+    for (const type of ["start", "advance"]) {
+      s = await (await host.request.get(url)).json();
+      await host.request.post(url, {
+        data: {
+          commandId: crypto.randomUUID(),
+          revision: s.revision,
+          action: { type },
+        },
+      });
+    }
+    const page = await team.newPage();
+    await page.goto("/room/" + room.id);
+    await page.getByLabel("מה אתן מציעות?").fill("תוכנית שימור חד פעמית");
+    await page.getByLabel("מה המחיר ומי מושפעת?").fill("זמן");
+    await page.getByLabel("מה התנאי להסכמה?").fill("מימון");
+    let first = true;
+    const ids: string[] = [];
+    await page.route("**/api/room/" + room.id, async (route) => {
+      if (
+        route.request().method() !== "POST" ||
+        route.request().postDataJSON().action.type !== "proposal"
+      ) {
+        await route.continue();
+        return;
+      }
+      const body = route.request().postDataJSON();
+      ids.push(body.commandId);
+      const response = await route.fetch();
+      if (first) {
+        first = false;
+        await route.fulfill({
+          status: 504,
+          contentType: "text/html",
+          body: "<html>Gateway timeout</html>",
+        });
+      } else await route.fulfill({ response });
+    });
+    await page.getByRole("button", { name: "שליחת העמדה" }).click();
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ hasText: "החיבור למשחק אינו זמין כרגע" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "שליחת העמדה" }).click();
+    await expect.poll(() => ids.length).toBe(2);
+    expect(ids[0]).toBe(ids[1]);
+    s = await (await host.request.get(url)).json();
+    expect(s.proposals).toHaveLength(1);
+    expect(s.proposals[0].action).toBe("תוכנית שימור חד פעמית");
+    await host.request.post(url, {
+      data: {
+        commandId: crypto.randomUUID(),
+        revision: s.revision,
+        action: { type: "delete" },
+      },
+    });
+  } finally {
+    await host.close();
+    await team.close();
+  }
 });

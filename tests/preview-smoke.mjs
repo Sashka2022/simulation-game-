@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { chromium } from "@playwright/test";
 import { existsSync } from "node:fs";
-const config = JSON.parse(await readFile("vercel.json", "utf8"));
+const config = JSON.parse(await readFile("vercel.demo.json", "utf8"));
 const files = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/demo.js": ["demo.js", "text/javascript"],

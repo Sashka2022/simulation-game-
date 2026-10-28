@@ -1,15 +1,35 @@
+import { ServiceError } from "./errors";
 import { NextRequest, NextResponse } from "next/server";
 export function error(e: unknown) {
-  const message = e instanceof Error ? e.message : "אירעה שגיאה";
+  const databaseFailure =
+    e instanceof ServiceError ||
+    (e &&
+      typeof e === "object" &&
+      ("severity" in e ||
+        ("code" in e &&
+          /^(?:[0-9A-Z]{5}|ECONN|ETIMEDOUT|CONNECTION|ENOTFOUND|EAI_)/.test(
+            String(e.code),
+          ))));
+  const message =
+    e instanceof ServiceError
+      ? e.message
+      : databaseFailure
+        ? "החיבור למשחק אינו זמין כרגע. הטיוטה נשמרה; נסו שוב בעוד רגע."
+        : e instanceof Error
+          ? e.message
+          : "אירעה שגיאה";
   return NextResponse.json(
     { error: message },
     {
-      status:
-        message === "PENDING"
+      status: databaseFailure
+        ? 503
+        : message === "PENDING"
           ? 202
-          : message.includes("הרשאה") || message.includes("בלבד")
-            ? 403
-            : 400,
+          : message.includes("המפגש לא נמצא")
+            ? 404
+            : message.includes("הרשאה") || message.includes("בלבד")
+              ? 403
+              : 400,
       headers: { "Cache-Control": "no-store" },
     },
   );

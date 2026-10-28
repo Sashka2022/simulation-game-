@@ -3425,3 +3425,22 @@ legend {
     gap: 10px;
   }
 }
+
+.live-status-notice {
+  max-width: 1240px;
+  margin: 20px auto 0;
+  padding: 14px 20px;
+  background: #fcf4e3;
+  border: 1px solid #d5be8f;
+  color: #795416;
+  border-radius: 7px;
+  font-size: 15px;
+}
+.live-status-notice a {
+  text-decoration: underline;
+}
+@media (max-width: 699px) {
+  .live-status-notice {
+    margin-inline: 20px;
+  }
+}

@@ -56,6 +56,7 @@ import {
   type Clause,
 } from "../../../lib/engine";
 import QRCode from "qrcode";
+import { responseJson } from "../../../lib/client-response";
 import { useDialogFocus } from "../../../lib/use-dialog-focus";
 import { kindLabels } from "../../../lib/provenance";
 type Snapshot = Game & {
@@ -105,6 +106,12 @@ export default function Room({ id }: { id: string }) {
   const ref = useRef<Snapshot | null>(null);
   const clockOffset = useRef(0);
   const projector = useRef("");
+  const requestSequence = useRef(0);
+  const pendingCommand = useRef<{
+    payload: string;
+    id: string;
+    revision: number;
+  } | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftLoaded = useRef(false);
   const channel = useRef<BroadcastChannel | null>(null);
@@ -116,6 +123,7 @@ export default function Room({ id }: { id: string }) {
   }, []);
   const refresh = useCallback(async () => {
     if (demo) return;
+    const sequence = ++requestSequence.current;
     try {
       const r = await fetch("/api/room/" + id, {
         cache: "no-store",
@@ -123,19 +131,28 @@ export default function Room({ id }: { id: string }) {
           ? { "x-projector-token": projector.current }
           : {},
       });
-      const b = await r.json();
+      const b = await responseJson(r);
+      if (sequence !== requestSequence.current) return;
       if (r.status === 202) {
         setPending(true);
         return;
       }
-      if (!r.ok) throw Error(b.error);
+      if (!r.ok) {
+        if (r.status === 403 || r.status === 404) {
+          ref.current = null;
+          setSnap(null);
+          setPending(false);
+        }
+        throw Error(b.error);
+      }
       setPending(false);
       setError("");
       setConnected(true);
       update(b);
     } catch (e) {
+      if (sequence !== requestSequence.current) return;
       setConnected(false);
-      if (!ref.current) setError((e as Error).message);
+      setError((e as Error).message);
     }
   }, [id, demo, update]);
   useEffect(() => {
@@ -169,8 +186,24 @@ export default function Room({ id }: { id: string }) {
     projector.current =
       new URLSearchParams(location.hash.slice(1)).get("projector") || "";
     refresh();
-    const t = setInterval(refresh, 2000);
-    return () => clearInterval(t);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await refresh();
+      if (!stopped) timer = setTimeout(poll, 2000);
+    };
+    timer = setTimeout(poll, 2000);
+    const regain = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("online", regain);
+    document.addEventListener("visibilitychange", regain);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      window.removeEventListener("online", regain);
+      document.removeEventListener("visibilitychange", regain);
+    };
   }, [demo, demoActor, refresh, update]);
   useEffect(() => {
     const t = setInterval(() => setTick(Date.now()), 1000);
@@ -235,17 +268,28 @@ export default function Room({ id }: { id: string }) {
         update({ ...current, ...g });
         channel.current?.postMessage("changed");
       } else {
+        const payload = JSON.stringify(action);
+        const request =
+          pendingCommand.current?.payload === payload
+            ? pendingCommand.current
+            : { payload, id: uid(), revision: current.revision };
+        pendingCommand.current = request;
         const res = await fetch("/api/room/" + id, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action,
-            commandId: uid(),
-            revision: current.revision,
+            commandId: request.id,
+            revision: request.revision,
           }),
         });
-        const b = await res.json();
-        if (!res.ok) throw Error(b.error);
+        const b = await responseJson(res);
+        if (!res.ok) {
+          if (res.status < 500) pendingCommand.current = null;
+          await refresh();
+          throw Error(b.error);
+        }
+        pendingCommand.current = null;
         if (action.type === "delete") {
           location.assign("/");
           return true;
@@ -281,7 +325,11 @@ export default function Room({ id }: { id: string }) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            action: { type: "draft", draft: { ...values, phase: s.phase } },
+            action: {
+              type: "draft",
+              draft: { ...values, phase: s.phase },
+              draftVersion: Date.now(),
+            },
             commandId: uid(),
             revision: s.revision,
           }),
@@ -1758,6 +1806,33 @@ export default function Room({ id }: { id: string }) {
               >
                 <Monitor size={17} />
                 פתיחת מסך הקרנה
+              </button>
+              <button
+                className="btn outline full-width"
+                onClick={() => {
+                  const key = sessionStorage.getItem("projector_" + id);
+                  if (!key) {
+                    setError(
+                      "נדרש לשחזר את גישת המנחה כדי לקבל קישור הקרנה חדש.",
+                    );
+                    return;
+                  }
+                  navigator.clipboard
+                    .writeText(
+                      location.origin + "/room/" + id + "#projector=" + key,
+                    )
+                    .then(() =>
+                      setToast("קישור ההקרנה הועתק — אפשר לפתוח במכשיר אחר"),
+                    )
+                    .catch(() =>
+                      setError(
+                        "ההעתקה אינה זמינה בדפדפן הזה. פתחי את מסך ההקרנה והעתיקי את כתובתו.",
+                      ),
+                    );
+                }}
+              >
+                <Copy size={17} />
+                העתקת קישור למקרן
               </button>
               <details className="recovery-box">
                 <summary>
