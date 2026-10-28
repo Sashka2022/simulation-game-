@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { publicRoles, schools } from "../lib/content";
 import { responseJson } from "../lib/client-response";
+import TextSizeControl from "./text-size";
 import { useDialogFocus } from "../lib/use-dialog-focus";
 export default function Landing() {
   const [mode, setMode] = useState<"host" | "join" | "recover" | null>(null),
@@ -89,6 +90,7 @@ export default function Landing() {
           </span>
         </a>
         <nav aria-label="ניווט ראשי">
+          <TextSizeControl />
           <a href="#about">על המשחק</a>
           <a href="#roles">המשלחות</a>
           <button

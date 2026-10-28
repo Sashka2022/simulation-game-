@@ -27,3 +27,7 @@ A browser smoke test of the production bundle also passed with VERCEL=1 and Post
 - No production database contents, credentials, deployment success or fresh-task snapshot restoration is claimed.
 
 Run commands are in README.md; setup and post-deployment checks are in live-vercel.md.
+
+## Readability update — 28 October 2026
+
+26 unit tests and 13 browser scenarios passed after the readability changes, including all eight existing synchronization/gameplay scenarios. New checks cover large text at narrow widths, retained drafts through disclosures and reloads, keyboard term help, per-phase submission status, highlighted Hebrew revisions, and a full-HD projector with no overflow. The production build and visual production screenshots at phone/desktop/projector sizes were also verified. No backend, permissions, timings or game rules changed. See readability.md for scope and manual audit limits.

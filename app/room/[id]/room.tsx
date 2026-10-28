@@ -69,6 +69,20 @@ type Snapshot = Game & {
   draft?: Record<string, unknown>;
   teams: { role: Role; joined: boolean; connected: boolean }[];
 };
+import TextSizeControl from "../../text-size";
+import Projector from "./components/projector";
+import {
+  TaskGuide,
+  ReadinessPanel,
+  GlossaryStrip,
+  ExplainedText,
+  RevisionComparison,
+} from "./components/guidance";
+import {
+  sceneSummaries,
+  phaseProgress,
+  missingConditions,
+} from "../../../lib/guidance";
 type Tab = "event" | "role" | "ledger" | "help" | "report";
 const uid = () => crypto.randomUUID();
 const roleName = (r: string) => publicRoles.find((x) => x.id === r)?.name || r;
@@ -95,6 +109,7 @@ export default function Room({ id }: { id: string }) {
     [toast, setToast] = useState(""),
     [busy, setBusy] = useState(false),
     [tick, setTick] = useState(Date.now()),
+    [activeStep, setActiveStep] = useState(0),
     [qr, setQr] = useState(""),
     [showSecret, setShowSecret] = useState(false),
     [confirm, setConfirm] = useState<"advance" | "delete" | null>(null);
@@ -248,6 +263,7 @@ export default function Room({ id }: { id: string }) {
   useEffect(() => {
     draftLoaded.current = false;
     setShowSecret(false);
+    setActiveStep(0);
   }, [snap?.phase, tab]);
   async function send(action: Action): Promise<boolean> {
     if (busy) return false;
@@ -377,18 +393,34 @@ export default function Room({ id }: { id: string }) {
   const sceneBody = (
     <>
       <div className="scene-kicker">
-        <span className="pill">{scene.label}</span>
+        <span className="pill">{phaseProgress(snap.phase)}</span>
         <Fiction />
       </div>
       <h1 className="scene-title">{scene.title}</h1>
       <p className="scene-subtitle">{scene.subtitle}</p>
+      {team && (
+        <TaskGuide
+          key={snap.phase}
+          game={snap}
+          role={actor.role}
+          onNavigate={navigateTask}
+          activeStep={activeStep}
+          setActiveStep={setActiveStep}
+        />
+      )}
       <div className="announcement">
         <span className="announcement-icon">
           <Radio size={22} />
         </span>
         <div>
           <span className="overline">עדכון מחדר המצב</span>
-          <p>{scene.message}</p>
+          <p className="scene-summary">{sceneSummaries[snap.phase]}</p>
+          <details key={snap.phase} className="story-details">
+            <summary>לסיפור המלא</summary>
+            <p>
+              <ExplainedText text={scene.message} />
+            </p>
+          </details>
         </div>
       </div>
     </>
@@ -526,77 +558,39 @@ export default function Room({ id }: { id: string }) {
   );
   if (projecting)
     return (
-      <main id="main" className="projector">
-        <div className="projector-top">
-          <a className="brand" href="/">
-            <Layers3 />
-            חדר המצב
-          </a>
-          <span>{scene.label}</span>
-          <span className="timer">{format(active)}</span>
-          <button
-            className="icon-btn no-print"
-            aria-label="מסך מלא"
-            onClick={() => document.documentElement.requestFullscreen?.()}
-          >
-            <Monitor />
-          </button>
-        </div>
-        {!connected && (
-          <p role="status">החיבור נותק — מוצגת התמונה האחרונה שנשמרה</p>
-        )}
-        <div className="projector-scene">
-          {scene.options && snap.revealedOptions?.includes(snap.phase) ? (
-            <>
-              <div className="scene-kicker">
-                <span className="pill">{scene.label}</span>
-                <Fiction />
-              </div>
-              <h1 className="scene-title">{scene.title}</h1>
-              <div className="projector-options">
-                {scene.options.map((o) => (
-                  <article key={o.id}>
-                    <span className="option-letter">{o.id}</span>
-                    <h2>{o.title}</h2>
-                    <p>{o.description}</p>
-                  </article>
-                ))}
-              </div>
-            </>
-          ) : (
-            sceneBody
-          )}
-        </div>
-        {snap.phase === "FUTURE" ? (
-          <>
-            <h2>{outcome.title}</h2>
-            <p>{outcome.reason}</p>
-          </>
-        ) : snap.revealedOptions?.includes(snap.phase) ? (
-          <div className="projector-school-summary">
-            {schools.map((s) => (
-              <p key={s.id}>
-                <strong>{s.name}</strong> · {s.classSize} בכיתה · {s.barrier}
-              </p>
-            ))}
-          </div>
-        ) : (
-          <div className="projector-schools">{schoolCards}</div>
-        )}
-        <div className="projector-bottom">
-          {snap.phase === "AGREEMENT" || snap.phase === "COMPLETE" ? (
-            snap.clauses.map((c) => (
-              <p key={c.id}>
-                {c.category}: {c.action || "טרם נוסח"} · {statuses[c.status]}
-              </p>
-            ))
-          ) : (
-            <p>{beat?.instruction || scene.task}</p>
-          )}
-        </div>
-        <Progress index={phaseIndex} />
-      </main>
+      <Projector
+        game={snap}
+        time={format(active)}
+        connected={connected}
+        instruction={beat?.instruction || scene.task}
+        beatTitle={beat?.title || scene.label}
+      />
     );
+  function navigateTask(target: string) {
+    if (["role", "ledger", "report", "event"].includes(target)) {
+      setTab(target as Tab);
+      requestAnimationFrame(() => {
+        const title = document.querySelector<HTMLElement>(".workspace-main h1");
+        if (title) {
+          title.tabIndex = -1;
+          title.focus();
+          title.scrollIntoView({ block: "start" });
+        }
+      });
+      return;
+    }
+    requestAnimationFrame(() => {
+      const element = document.getElementById(target);
+      if (!element) return;
+      element.scrollIntoView({
+        behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+        block: "start",
+      });
+      element.focus({ preventScroll: true });
+    });
+  }
   return (
     <div className="workspace">
       <header className="workspace-header">
@@ -612,6 +606,7 @@ export default function Room({ id }: { id: string }) {
           {snap.name}
           <span className="small muted">{host ? "ממשק מנחה" : role?.name}</span>
         </div>
+        <TextSizeControl />
         <div className="connection">
           <span className={connected ? "live-dot" : "offline-dot"} />
           {connected ? "מחוברות" : "החיבור נותק"}
@@ -845,6 +840,9 @@ export default function Room({ id }: { id: string }) {
                   </button>
                 </div>
               )}
+              {host && snap.phase !== "COMPLETE" && (
+                <ReadinessPanel game={snap} teams={snap.teams} />
+              )}
               {remaining <= 0 && scene.minutes > 0 && host && (
                 <p className="warning-banner">
                   <Clock3 size={18} />
@@ -861,32 +859,13 @@ export default function Room({ id }: { id: string }) {
               {snap.phase === "LOBBY" && (
                 <>
                   <div className="section-heading">
-                    <h2>מי סביב השולחן?</h2>
+                    <h2 id="team-join" tabIndex={-1}>
+                      מי סביב השולחן?
+                    </h2>
                     <span className="muted small">
                       {snap.teams.filter((t) => t.joined).length} מתוך 5 משלחות
                       הצטרפו
                     </span>
-                  </div>
-                  <div className="team-readiness">
-                    {snap.teams.map((t) => (
-                      <div className="readiness-card" key={t.role}>
-                        <span className="role-avatar">
-                          {publicRoles.find((r) => r.id === t.role)?.initial}
-                        </span>
-                        <strong>{roleName(t.role)}</strong>
-                        <span
-                          className={t.joined ? "ready-label" : "muted small"}
-                        >
-                          {t.joined ? (
-                            <>
-                              <CheckCircle2 size={14} /> מוכנות
-                            </>
-                          ) : (
-                            "ממתינות להצטרפות"
-                          )}
-                        </span>
-                      </div>
-                    ))}
                   </div>
                   {host && !demo && (
                     <div className="join-panel">
@@ -937,7 +916,9 @@ export default function Room({ id }: { id: string }) {
               {["OPENING", "LOBBY"].includes(snap.phase) && (
                 <>
                   <div className="section-heading">
-                    <h2>שני בתי ספר. יעד משותף.</h2>
+                    <h2 id="schools" tabIndex={-1}>
+                      שני בתי ספר. יעד משותף.
+                    </h2>
                     <Fiction />
                   </div>
                   {schoolCards}
@@ -947,18 +928,19 @@ export default function Room({ id }: { id: string }) {
                   </p>
                 </>
               )}
-              {!["LOBBY", "COMPLETE", "FUTURE"].includes(snap.phase) && (
-                <div className="task-banner">
-                  <Flag size={21} />
-                  <div>
-                    <strong>{beat?.title || "המשימה עכשיו"}</strong>
-                    <p>{beat?.instruction || scene.task}</p>
+              {host &&
+                !["LOBBY", "COMPLETE", "FUTURE"].includes(snap.phase) && (
+                  <div className="task-banner">
+                    <Flag size={21} />
+                    <div>
+                      <strong>{beat?.title || "המשימה עכשיו"}</strong>
+                      <p>{beat?.instruction || scene.task}</p>
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
               {snap.phase === "CRISIS3" && (
                 <>
-                  <div className="letters-grid">
+                  <div className="letters-grid" id="letters" tabIndex={-1}>
                     <div className="letter-card">
                       <span className="overline">מיכל · שבילים</span>
                       <h3>״יש תקציב לחונכות. אין מורות.״</h3>
@@ -991,7 +973,10 @@ export default function Room({ id }: { id: string }) {
                         });
                       }}
                     >
-                      <h2>מי יכולה להזיז את זה?</h2>
+                      <h2 id="authority-form" tabIndex={-1}>
+                        מי יכולה להזיז את זה?
+                      </h2>
+                      <GlossaryStrip />
                       <p className="muted">
                         לא בטוחות? כתבו ״נדרש בירור״ ופתחו את העזרה.
                       </p>
@@ -1072,7 +1057,9 @@ export default function Room({ id }: { id: string }) {
                         });
                       }}
                     >
-                      <h3>מה ייראה אחרת בכיתה?</h3>
+                      <h3 id="practice-form" tabIndex={-1}>
+                        מה ייראה אחרת בכיתה?
+                      </h3>
                       <label>
                         התייחסו לשני הקולות והגדירו פרקטיקה וסימן לשינוי
                         <textarea
@@ -1096,7 +1083,9 @@ export default function Room({ id }: { id: string }) {
               {scene.options && (
                 <>
                   <div className="section-heading">
-                    <h2>שלושה כיוונים. מה הכיוון שלכן?</h2>
+                    <h2 id="options" tabIndex={-1}>
+                      שלושה כיוונים. מה הכיוון שלכן?
+                    </h2>
                     {host && (
                       <button
                         className="btn-small outline"
@@ -1130,8 +1119,12 @@ export default function Room({ id }: { id: string }) {
                     <form
                       key={snap.phase}
                       id="proposal-form"
+                      tabIndex={-1}
                       className="panel proposal-form"
-                      onChange={draft}
+                      onChange={(e) => {
+                        draft(e);
+                        setActiveStep(1);
+                      }}
                       onSubmit={async (e) => {
                         e.preventDefault();
                         const f = Object.fromEntries(
@@ -1341,7 +1334,7 @@ export default function Room({ id }: { id: string }) {
               {snap.phase === "AGREEMENT" && (
                 <>
                   <Ledger snap={snap} send={send} busy={busy} editable />
-                  <div className="advisor-panel">
+                  <div className="advisor-panel" id="advisor" tabIndex={-1}>
                     <BookOpen size={24} />
                     <div>
                       <h3>בדיקה אחת. שלוש שאלות.</h3>
@@ -1381,7 +1374,7 @@ export default function Room({ id }: { id: string }) {
               )}
               {snap.phase === "FUTURE" && (
                 <>
-                  <div className="outcome-heading">
+                  <div className="outcome-heading" id="outcome" tabIndex={-1}>
                     <span className="eyebrow">תוצאה אפשרית בסימולציה</span>
                     <h2>{outcome.title}</h2>
                     <p>{outcome.reason}</p>
@@ -1411,12 +1404,10 @@ export default function Room({ id }: { id: string }) {
                   {snap.finalRevision ? (
                     <div className="panel">
                       <h3>התיקון שלנו</h3>
-                      <p>
-                        <del>
-                          {snap.finalRevision.before || "לא נוסח סעיף קודם"}
-                        </del>
-                      </p>
-                      <p>{snap.finalRevision.after}</p>
+                      <RevisionComparison
+                        before={snap.finalRevision.before}
+                        after={snap.finalRevision.after}
+                      />
                       <p className="muted">
                         מה למדנו: {snap.finalRevision.reason}
                       </p>
@@ -1451,7 +1442,9 @@ export default function Room({ id }: { id: string }) {
                         });
                       }}
                     >
-                      <h3>משנות סעיף אחד, מתוך מה שלמדנו</h3>
+                      <h3 id="final-form" tabIndex={-1}>
+                        משנות סעיף אחד, מתוך מה שלמדנו
+                      </h3>
                       <label>
                         איזה סעיף?
                         <select name="id">
@@ -1481,6 +1474,8 @@ export default function Room({ id }: { id: string }) {
                 <>
                   {team ? (
                     <form
+                      id="reflection-form"
+                      tabIndex={-1}
                       className="panel"
                       onSubmit={(e) => {
                         e.preventDefault();
@@ -1543,27 +1538,33 @@ export default function Room({ id }: { id: string }) {
               )}
               {snap.proposals.some((p) => p.phase === snap.phase) && (
                 <section className="panel">
-                  <h2>העמדות שעל השולחן</h2>
-                  {publicRoles.map((r) => {
-                    const p = snap.proposals
-                      .filter((p) => p.phase === snap.phase && p.team === r.id)
-                      .at(-1);
-                    return p ? (
-                      <article className="proposal-summary" key={r.id}>
-                        <span className="role-avatar">{r.initial}</span>
-                        <div>
-                          <strong>{r.name}</strong>
-                          <p>{p.action}</p>
-                          <span className="small muted">
-                            המחיר: {p.price} · התנאי: {p.condition}
+                  <details className="group-context" open={host}>
+                    <summary>
+                      <h2>העמדות שעל השולחן</h2>
+                    </summary>
+                    {publicRoles.map((r) => {
+                      const p = snap.proposals
+                        .filter(
+                          (p) => p.phase === snap.phase && p.team === r.id,
+                        )
+                        .at(-1);
+                      return p ? (
+                        <article className="proposal-summary" key={r.id}>
+                          <span className="role-avatar">{r.initial}</span>
+                          <div>
+                            <strong>{r.name}</strong>
+                            <p>{p.action}</p>
+                            <span className="small muted">
+                              המחיר: {p.price} · התנאי: {p.condition}
+                            </span>
+                          </div>
+                          <span className="pill">
+                            {p.option === "MIX" ? "שילוב" : p.option}
                           </span>
-                        </div>
-                        <span className="pill">
-                          {p.option === "MIX" ? "שילוב" : p.option}
-                        </span>
-                      </article>
-                    ) : null;
-                  })}
+                        </article>
+                      ) : null;
+                    })}
+                  </details>
                 </section>
               )}
               {snap.shared.length > 0 && (
@@ -1957,21 +1958,9 @@ export default function Room({ id }: { id: string }) {
     </div>
   );
 }
-function Progress({ index }: { index: number }) {
-  return (
-    <div className="progress-track" aria-label="התקדמות המשחק">
-      {scenes.slice(1, -1).map((s, i) => (
-        <div key={s.id} className={index >= i + 1 ? "filled" : ""}>
-          <span />
-          {s.label}
-        </div>
-      ))}
-    </div>
-  );
-}
 function Research() {
   return (
-    <section>
+    <section id="research" tabIndex={-1}>
       <div className="section-heading">
         <h2>שתי ראיות. שאלה אחת טובה יותר.</h2>
         <span className="pill">סיכומים ממתינים לאימות</span>
@@ -2018,7 +2007,7 @@ function Ledger({
   const [editing, setEditing] = useState<string | null>(null);
   const [conditions, setConditions] = useState<Record<string, string>>({});
   return (
-    <div className="ledger-list">
+    <div className="ledger-list" id="agreement" tabIndex={-1}>
       {snap.clauses.map((c) => (
         <article className="ledger-card" key={c.id}>
           <div className="ledger-header">
@@ -2037,46 +2026,53 @@ function Ledger({
               {statuses[c.status]}
             </span>
           </div>
-          <p className={!c.action ? "muted" : ""}>
-            {c.action || "הסעיף עדיין פתוח. כאן תופיע ההתחייבות המשותפת."}
-          </p>
+          <dl className="commitment-summary">
+            <div className="commitment-action">
+              <dt>מה נעשה</dt>
+              <dd>
+                {c.action || "הסעיף עדיין פתוח. נסחו יחד פעולה קצרה וברורה."}
+              </dd>
+            </div>
+            <div>
+              <dt>מי אחראי</dt>
+              <dd>{c.owner || "טרם נקבעה אחריות"}</dd>
+            </div>
+            <div>
+              <dt>עד מתי</dt>
+              <dd>{c.deadline || "טרם נקבע מועד"}</dd>
+            </div>
+            <div className="commitment-missing">
+              <dt>מה עדיין חסר</dt>
+              <dd>{missingConditions(c)}</dd>
+            </div>
+          </dl>
           {c.action && (
-            <dl className="clause-details">
-              <div>
-                <dt>אחריות</dt>
-                <dd>{c.owner}</dd>
-              </div>
-              <div>
-                <dt>הצעד הבא</dt>
-                <dd>{c.nextStep}</dd>
-              </div>
-              <div>
-                <dt>עד מתי</dt>
-                <dd>{c.deadline}</dd>
-              </div>
-              <div>
-                <dt>מה נדרש</dt>
-                <dd>
-                  {[
-                    !c.authority && "סמכות",
-                    !c.funding && "מימון",
-                    !c.readiness && "מוכנות",
-                  ]
-                    .filter(Boolean)
-                    .join(" · ") || "תנאי הביצוע תועדו בסימולציה"}
-                </dd>
-              </div>
-            </dl>
+            <details className="commitment-extra">
+              <summary>שותפים, משאבים והצעד הבא</summary>
+              <dl className="clause-details">
+                <div>
+                  <dt>הצעד הבא</dt>
+                  <dd>{c.nextStep}</dd>
+                </div>
+                <div>
+                  <dt>שותפים</dt>
+                  <dd>{c.requiredPartners}</dd>
+                </div>
+                <div>
+                  <dt>משאבים</dt>
+                  <dd>{c.resources}</dd>
+                </div>
+                <div>
+                  <dt>השפעה על בתי הספר</dt>
+                  <dd>{c.schoolEffects}</dd>
+                </div>
+              </dl>
+            </details>
           )}
           {c.previous && (
             <details className="history-details">
               <summary>מה השתנה מהגרסה הקודמת?</summary>
-              <p>
-                <strong>לפני:</strong> {c.previous}
-              </p>
-              <p>
-                <strong>אחרי:</strong> {c.action}
-              </p>
+              <RevisionComparison before={c.previous} after={c.action} />
             </details>
           )}
           {editable && (
@@ -2115,6 +2111,7 @@ function Ledger({
                   setEditing(null);
               }}
             >
+              <GlossaryStrip />
               <label>
                 מה נעשה?
                 <textarea
