@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowUpLeft,
@@ -59,7 +59,13 @@ import QRCode from "qrcode";
 import { responseJson } from "../../../lib/client-response";
 import { useDialogFocus } from "../../../lib/use-dialog-focus";
 import { kindLabels } from "../../../lib/provenance";
+import {
+  MembersPanel,
+  TeamSpace,
+  type MembershipView,
+} from "./components/members";
 type Snapshot = Game & {
+  membership?: MembershipView;
   actor: Actor;
   serverNow: number;
   code?: string;
@@ -132,6 +138,26 @@ export default function Room({ id }: { id: string }) {
   const channel = useRef<BroadcastChannel | null>(null);
   const update = useCallback((s: Snapshot) => {
     if (ref.current && s.revision < ref.current.revision) return;
+    if (ref.current?.actor.role && ref.current.actor.role !== s.actor.role) {
+      const prefix = "draft_" + ref.current.id + "_";
+      try {
+        for (const key of Object.keys(localStorage))
+          if (key.startsWith(prefix)) localStorage.removeItem(key);
+      } catch {}
+      if (draftTimer.current) clearTimeout(draftTimer.current);
+      draftLoaded.current = false;
+      pendingCommand.current = null;
+      setShowSecret(false);
+    }
+    if (s.id !== "demo" && s.actor.kind === "team") {
+      try {
+        const prefix = "draft_" + s.id + "_";
+        const own = prefix + s.actor.memberId + "_" + s.actor.role + "_";
+        for (const key of Object.keys(localStorage))
+          if (key.startsWith(prefix) && !key.startsWith(own))
+            localStorage.removeItem(key);
+      } catch {}
+    }
     ref.current = s;
     clockOffset.current = s.serverNow - Date.now();
     setSnap(s);
@@ -180,6 +206,7 @@ export default function Room({ id }: { id: string }) {
         } catch {}
         update({
           ...g,
+          membership: undefined,
           actor: demoActor,
           serverNow: Date.now(),
           code: "הדגמה",
@@ -245,7 +272,14 @@ export default function Room({ id }: { id: string }) {
     let draft: Record<string, string> | null = null;
     try {
       const local = localStorage.getItem(
-        "draft_" + id + "_" + snap?.actor.role + "_" + snap?.phase,
+        "draft_" +
+          id +
+          "_" +
+          (snap?.actor.memberId || "demo") +
+          "_" +
+          snap?.actor.role +
+          "_" +
+          snap?.phase,
       );
       draft = local
         ? JSON.parse(local)
@@ -264,7 +298,7 @@ export default function Room({ id }: { id: string }) {
     draftLoaded.current = false;
     setShowSecret(false);
     setActiveStep(0);
-  }, [snap?.phase, tab]);
+  }, [snap?.phase, snap?.actor.role, tab]);
   async function send(action: Action): Promise<boolean> {
     if (busy) return false;
     setBusy(true);
@@ -281,9 +315,10 @@ export default function Room({ id }: { id: string }) {
           current.revision,
         );
         localStorage.setItem("hadar-demo-v1", JSON.stringify(g));
-        update({ ...current, ...g });
+        update({ ...current, ...g, membership: current.membership });
         channel.current?.postMessage("changed");
       } else {
+        action = { ...action, roleScope: current.actor.role };
         const payload = JSON.stringify(action);
         const request =
           pendingCommand.current?.payload === payload
@@ -330,7 +365,14 @@ export default function Room({ id }: { id: string }) {
     if (!s) return;
     try {
       localStorage.setItem(
-        "draft_" + id + "_" + s.actor.role + "_" + s.phase,
+        "draft_" +
+          id +
+          "_" +
+          (s.actor.memberId || "demo") +
+          "_" +
+          s.actor.role +
+          "_" +
+          s.phase,
         JSON.stringify(values),
       );
     } catch {}
@@ -343,6 +385,7 @@ export default function Room({ id }: { id: string }) {
           body: JSON.stringify({
             action: {
               type: "draft",
+              roleScope: s.actor.role,
               draft: { ...values, phase: s.phase },
               draftVersion: Date.now(),
             },
@@ -388,6 +431,10 @@ export default function Room({ id }: { id: string }) {
     .at(-1);
   const phaseEnd = (scene.start + scene.minutes) * 60000;
   const remaining = phaseEnd - active;
+  const canSubmit =
+    demo ||
+    host ||
+    snap.membership?.representatives[actor.role!] === actor.memberId;
   const role = publicRoles.find((r) => r.id === actor.role);
   const outcome = snap.outcome || selectOutcome(snap);
   const sceneBody = (
@@ -398,7 +445,7 @@ export default function Room({ id }: { id: string }) {
       </div>
       <h1 className="scene-title">{scene.title}</h1>
       <p className="scene-subtitle">{scene.subtitle}</p>
-      {team && (
+      {team && demo && (
         <TaskGuide
           key={snap.phase}
           game={snap}
@@ -778,7 +825,17 @@ export default function Room({ id }: { id: string }) {
             </div>
           )}
           {tab === "event" && (
-            <>
+            <Fragment key={actor.role || "host"}>
+              {host && snap.membership && !demo && (
+                <MembersPanel
+                  membership={snap.membership}
+                  actor={actor}
+                  busy={busy}
+                  send={send}
+                  code={snap.code}
+                  qr={qr}
+                />
+              )}
               <div className="event-heading">
                 <div>{sceneBody}</div>
                 <div className="clock-card">
@@ -794,6 +851,17 @@ export default function Room({ id }: { id: string }) {
                   </span>
                 </div>
               </div>
+              {team && snap.membership && (
+                <TeamSpace
+                  key={actor.role}
+                  membership={snap.membership}
+                  actor={actor}
+                  busy={busy}
+                  send={send}
+                  phase={snap.phase}
+                  proposals={snap.proposals}
+                />
+              )}
               {host && (
                 <div className="host-controls no-print">
                   <div>
@@ -882,12 +950,7 @@ export default function Room({ id }: { id: string }) {
                         <p>
                           סרקו את הקוד או היכנסו לעמוד הבית ובחרו ״כניסה למפגש״.
                         </p>
-                        <button
-                          className="link-button"
-                          onClick={() => send({ type: "rotate" })}
-                        >
-                          החלפת קוד כניסה
-                        </button>
+
                         <br />
                         <span className="room-code" dir="ltr">
                           {snap.code}
@@ -957,9 +1020,10 @@ export default function Room({ id }: { id: string }) {
                   </div>
                   <div className="warning-banner">
                     <Users size={20} />
-                    החליפו תפקידים בזוג: נציגת המשא ומתן ↔ יועצת המדיניות.
+                    בדקו מחדש את חלוקת המשימות: משא ומתן ובדיקת מדיניות. אפשר
+                    לשתף כמה משתתפות בכל פונקציה.
                   </div>
-                  {team && (
+                  {team && canSubmit && (
                     <form
                       className="panel"
                       onSubmit={(e) => {
@@ -1046,7 +1110,7 @@ export default function Room({ id }: { id: string }) {
                       </p>
                     </div>
                   </div>
-                  {team && (
+                  {team && canSubmit && (
                     <form
                       className="panel"
                       onSubmit={(e) => {
@@ -1082,106 +1146,115 @@ export default function Room({ id }: { id: string }) {
               )}
               {scene.options && (
                 <>
-                  <div className="section-heading">
-                    <h2 id="options" tabIndex={-1}>
-                      שלושה כיוונים. מה הכיוון שלכן?
-                    </h2>
-                    {host && (
-                      <button
-                        className="btn-small outline"
-                        disabled={
-                          busy || snap.revealedOptions?.includes(snap.phase)
-                        }
-                        onClick={() => send({ type: "revealOptions" })}
+                  <details className="delegation-options" open={canSubmit}>
+                    <summary>החלופות לדיון</summary>
+                    <div className="section-heading">
+                      <h2 id="options" tabIndex={-1}>
+                        שלושה כיוונים. מה הכיוון שלכן?
+                      </h2>
+                      {host && (
+                        <button
+                          className="btn-small outline"
+                          disabled={
+                            busy || snap.revealedOptions?.includes(snap.phase)
+                          }
+                          onClick={() => send({ type: "revealOptions" })}
+                        >
+                          <Monitor size={16} />
+                          {snap.revealedOptions?.includes(snap.phase)
+                            ? "החלופות מוצגות במקרן"
+                            : "חשיפת חלופות למקרן"}
+                        </button>
+                      )}
+                      <span className="muted small">אפשר גם לשלב ולהתאים</span>
+                    </div>
+                    <div className="option-grid">
+                      {scene.options.map((o) => (
+                        <article className="option-card" key={o.id}>
+                          <span className="option-letter">{o.id}</span>
+                          <h3>{o.title}</h3>
+                          <p>{o.description}</p>
+                          <div className="option-price">
+                            <span>המחיר שצריך לזכור</span>
+                            {o.price}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </details>
+                  {team &&
+                    canSubmit &&
+                    !snap.proposals.some(
+                      (p) => p.team === actor.role && p.phase === snap.phase,
+                    ) && (
+                      <form
+                        key={snap.phase}
+                        id="proposal-form"
+                        tabIndex={-1}
+                        className="panel proposal-form"
+                        onChange={(e) => {
+                          draft(e);
+                          setActiveStep(1);
+                        }}
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          const f = Object.fromEntries(
+                            new FormData(e.currentTarget),
+                          );
+                          if (await send({ type: "proposal", ...f }))
+                            setToast("העמדה נשלחה ונשמרה במפגש");
+                        }}
                       >
-                        <Monitor size={16} />
-                        {snap.revealedOptions?.includes(snap.phase)
-                          ? "החלופות מוצגות במקרן"
-                          : "חשיפת חלופות למקרן"}
-                      </button>
-                    )}
-                    <span className="muted small">אפשר גם לשלב ולהתאים</span>
-                  </div>
-                  <div className="option-grid">
-                    {scene.options.map((o) => (
-                      <article className="option-card" key={o.id}>
-                        <span className="option-letter">{o.id}</span>
-                        <h3>{o.title}</h3>
-                        <p>{o.description}</p>
-                        <div className="option-price">
-                          <span>המחיר שצריך לזכור</span>
-                          {o.price}
+                        <div className="section-heading">
+                          <h2>העמדה שלנו</h2>
+                          <span className="small muted">
+                            הטיוטה נשמרת במכשיר
+                          </span>
                         </div>
-                      </article>
-                    ))}
-                  </div>
-                  {team && (
-                    <form
-                      key={snap.phase}
-                      id="proposal-form"
-                      tabIndex={-1}
-                      className="panel proposal-form"
-                      onChange={(e) => {
-                        draft(e);
-                        setActiveStep(1);
-                      }}
-                      onSubmit={async (e) => {
-                        e.preventDefault();
-                        const f = Object.fromEntries(
-                          new FormData(e.currentTarget),
-                        );
-                        if (await send({ type: "proposal", ...f }))
-                          setToast("העמדה נשלחה ונשמרה במפגש");
-                      }}
-                    >
-                      <div className="section-heading">
-                        <h2>העמדה שלנו</h2>
-                        <span className="small muted">הטיוטה נשמרת במכשיר</span>
-                      </div>
-                      <label>
-                        הכיוון שנבחר
-                        <select name="option">
-                          {scene.options.map((o) => (
-                            <option key={o.id} value={o.id}>
-                              {o.id} · {o.title}
-                            </option>
-                          ))}
-                          <option value="MIX">שילוב / התאמה</option>
-                        </select>
-                      </label>
-                      <div className="form-grid">
                         <label>
-                          מה אתן מציעות?
-                          <textarea name="action" required maxLength={600} />
-                        </label>
-                        <label>
-                          מה המחיר ומי מושפעת?
-                          <textarea name="price" required maxLength={600} />
-                        </label>
-                        <label>
-                          מה התנאי להסכמה?
-                          <input name="condition" required maxLength={600} />
-                        </label>
-                        <label>
-                          מי אחראי?
-                          <select name="owner">
-                            {publicRoles.map((r) => (
-                              <option key={r.id} value={r.name}>
-                                {r.name}
+                          הכיוון שנבחר
+                          <select name="option">
+                            {scene.options.map((o) => (
+                              <option key={o.id} value={o.id}>
+                                {o.id} · {o.title}
                               </option>
                             ))}
+                            <option value="MIX">שילוב / התאמה</option>
                           </select>
                         </label>
-                      </div>
-                      <button
-                        className="btn primary"
-                        disabled={busy || !connected}
-                      >
-                        <Send size={17} />
-                        שליחת העמדה
-                      </button>
-                    </form>
-                  )}
+                        <div className="form-grid">
+                          <label>
+                            מה אתן מציעות?
+                            <textarea name="action" required maxLength={600} />
+                          </label>
+                          <label>
+                            מה המחיר ומי מושפעת?
+                            <textarea name="price" required maxLength={600} />
+                          </label>
+                          <label>
+                            מה התנאי להסכמה?
+                            <input name="condition" required maxLength={600} />
+                          </label>
+                          <label>
+                            מי אחראי?
+                            <select name="owner">
+                              {publicRoles.map((r) => (
+                                <option key={r.id} value={r.name}>
+                                  {r.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                        <button
+                          className="btn primary"
+                          disabled={busy || !connected}
+                        >
+                          <Send size={17} />
+                          שליחת העמדה
+                        </button>
+                      </form>
+                    )}
                 </>
               )}
               {snap.phase === "CRISIS2" && host && (
@@ -1333,7 +1406,13 @@ export default function Room({ id }: { id: string }) {
               )}
               {snap.phase === "AGREEMENT" && (
                 <>
-                  <Ledger snap={snap} send={send} busy={busy} editable />
+                  <Ledger
+                    key={actor.role}
+                    snap={snap}
+                    send={send}
+                    busy={busy}
+                    editable={canSubmit}
+                  />
                   <div className="advisor-panel" id="advisor" tabIndex={-1}>
                     <BookOpen size={24} />
                     <div>
@@ -1361,7 +1440,7 @@ export default function Room({ id }: { id: string }) {
                           <p>היועץ יבחר סעיף אחד שיש בו תלות פתוחה.</p>
                           <button
                             className="btn outline"
-                            disabled={busy}
+                            disabled={busy || !canSubmit}
                             onClick={() => send({ type: "advisor" })}
                           >
                             בדיקת סעיף אחד
@@ -1431,7 +1510,7 @@ export default function Room({ id }: { id: string }) {
                         אלו אפשרויות בדיוניות, לא תחזיות סיבתיות.
                       </p>
                     </div>
-                  ) : (
+                  ) : canSubmit ? (
                     <form
                       className="panel"
                       onSubmit={(e) => {
@@ -1467,12 +1546,14 @@ export default function Room({ id }: { id: string }) {
                         שמירת התיקון היחיד
                       </button>
                     </form>
+                  ) : (
+                    <p className="panel">נציגת ההגשה תתעד את התיקון המשותף.</p>
                   )}
                 </>
               )}
               {snap.phase === "TRANSFER" && (
                 <>
-                  {team ? (
+                  {team && canSubmit ? (
                     <form
                       id="reflection-form"
                       tabIndex={-1}
@@ -1577,7 +1658,7 @@ export default function Room({ id }: { id: string }) {
                   ))}
                 </section>
               )}
-            </>
+            </Fragment>
           )}
           {tab === "role" && (
             <>
@@ -1595,19 +1676,13 @@ export default function Room({ id }: { id: string }) {
                     <div>
                       <h2>{r.name}</h2>
                       <span className="muted">
-                        זוג אחד · שתי נקודות מבט משלימות
+                        משלחת אחת · שתי פונקציות משלימות
                       </span>
                     </div>
                   </div>
                   <div className="pair-roles">
-                    <span>
-                      {phaseIndex >= 4 ? "משתתפת ב׳" : "משתתפת א׳"} · נציגת משא
-                      ומתן
-                    </span>
-                    <span>
-                      {phaseIndex >= 4 ? "משתתפת א׳" : "משתתפת ב׳"} · יועצת
-                      מדיניות
-                    </span>
+                    <span>משא ומתן · משתתפת אחת או יותר</span>
+                    <span>בדיקת מדיניות · משתתפת אחת או יותר</span>
                   </div>
                   <h3>שתי המטרות שלכן</h3>
                   {r.goals.map((g) => (
@@ -1642,7 +1717,7 @@ export default function Room({ id }: { id: string }) {
                   )}
                 </article>
               ))}
-              {team && (
+              {team && canSubmit && (
                 <form
                   className="panel"
                   onSubmit={(e) => {
@@ -1677,11 +1752,14 @@ export default function Room({ id }: { id: string }) {
                 </p>
               </div>
               <Ledger
+                key={actor.role}
                 snap={snap}
                 send={send}
                 busy={busy}
                 editable={
-                  host || snap.phase === "CRISIS3" || snap.phase === "AGREEMENT"
+                  host ||
+                  (canSubmit &&
+                    (snap.phase === "CRISIS3" || snap.phase === "AGREEMENT"))
                 }
               />
             </>
@@ -1756,37 +1834,8 @@ export default function Room({ id }: { id: string }) {
               <small>
                 {t.connected ? "מחוברות" : t.joined ? "מנותקות" : "טרם הצטרפו"}
               </small>
-              {host && t.joined && !demo && (
-                <button
-                  className="icon-btn tiny"
-                  title="ביטול שיוך מכשיר"
-                  onClick={() => {
-                    if (window.confirm("לבטל את שיוך המכשיר למשלחת?"))
-                      send({ type: "revoke", role: t.role });
-                  }}
-                >
-                  <X size={12} />
-                </button>
-              )}
             </div>
           ))}
-          {host && snap.requests && snap.requests.length > 0 && (
-            <div className="requests">
-              <h3>בקשות הצטרפות</h3>
-              {snap.requests.map((r) => (
-                <div key={r.id}>
-                  <span>{roleName(r.role)}</span>
-                  <button
-                    className="btn-small primary"
-                    disabled={busy}
-                    onClick={() => send({ type: "approve", memberId: r.id })}
-                  >
-                    אישור
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
           {host && !demo && (
             <>
               <div className="context-divider" />
@@ -2214,53 +2263,57 @@ function Ledger({
               {c.published ? "פורסם למסך ההקרנה" : "פרסום ההתחייבות להקרנה"}
             </button>
           )}
-          {snap.actor.kind === "team" && c.action && (
-            <div className="consent-row">
-              <label className="consent-condition">
-                תנאי להסכמה (אם נדרש)
-                <input
-                  maxLength={600}
-                  value={conditions[c.id] || ""}
-                  onChange={(e) =>
-                    setConditions({ ...conditions, [c.id]: e.target.value })
-                  }
-                />
-              </label>
-              <span className="small">העמדה שלנו לגרסה {c.version}</span>
-              {[
-                ["support", "מסכימות"],
-                ["conditional", "בתנאי"],
-                ["object", "מתנגדות"],
-              ].map(([p, label]) => (
-                <button
-                  className={
-                    "btn-small " +
-                    (snap.consents.some(
-                      (v) =>
-                        v.team === snap.actor.role &&
-                        v.clauseId === c.id &&
-                        v.version === c.version &&
-                        v.position === p,
-                    )
-                      ? "primary"
-                      : "outline")
-                  }
-                  disabled={busy}
-                  key={p}
-                  onClick={() =>
-                    send({
-                      type: "consent",
-                      id: c.id,
-                      position: p,
-                      condition: conditions[c.id] || "",
-                    })
-                  }
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
+          {snap.actor.kind === "team" &&
+            c.action &&
+            (snap.id === "demo" ||
+              snap.membership?.representatives[snap.actor.role!] ===
+                snap.actor.memberId) && (
+              <div className="consent-row">
+                <label className="consent-condition">
+                  תנאי להסכמה (אם נדרש)
+                  <input
+                    maxLength={600}
+                    value={conditions[c.id] || ""}
+                    onChange={(e) =>
+                      setConditions({ ...conditions, [c.id]: e.target.value })
+                    }
+                  />
+                </label>
+                <span className="small">העמדה שלנו לגרסה {c.version}</span>
+                {[
+                  ["support", "מסכימות"],
+                  ["conditional", "בתנאי"],
+                  ["object", "מתנגדות"],
+                ].map(([p, label]) => (
+                  <button
+                    className={
+                      "btn-small " +
+                      (snap.consents.some(
+                        (v) =>
+                          v.team === snap.actor.role &&
+                          v.clauseId === c.id &&
+                          v.version === c.version &&
+                          v.position === p,
+                      )
+                        ? "primary"
+                        : "outline")
+                    }
+                    disabled={busy}
+                    key={p}
+                    onClick={() =>
+                      send({
+                        type: "consent",
+                        id: c.id,
+                        position: p,
+                        condition: conditions[c.id] || "",
+                      })
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           <p className="small muted">
             {
               snap.consents.filter(

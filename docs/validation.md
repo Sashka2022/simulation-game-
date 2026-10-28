@@ -1,6 +1,42 @@
 # Validation record
 
-Latest live-session validation: 28 October 2026, Node 24, Next.js 16, Chromium and an isolated PostgreSQL 17 container.
+## Open-delegation release — 28 October 2026
+
+Final implementation: Node 24, Next.js 16.4.3, Chromium and isolated PostgreSQL 17. The original pairs/one-device-per-role model is superseded by [open delegations](open-delegations.md).
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Strict TypeScript | Passed | Application, both adapters, UI and test sources |
+| Engine, guidance, provenance and HTTP | 26 passed | Four crises, 60-minute schedule, consequence branches, sources and safe errors |
+| Membership integration — SQLite | 11 passed | Variable group sizes, ideas, one official proposal, moves, approval, representative elections, functions and reconnect identity |
+| Membership integration — PostgreSQL | 11 passed | Same cases using actual concurrent database connections |
+| PostgreSQL process integration | 6 passed | Separate server processes, atomic receipts, stale writes, final-amendment race, recovery and rate limiting |
+| Legacy-schema migration | 1 passed | Old unique approved-team index, an existing live phase/commitment/member, then 20 new members in that same delegation |
+| Vercel database configuration guard | 1 passed | No ephemeral SQLite fallback |
+| UI, accessibility, reconnect and HTTP load | 22 passed | 17 UI/browser scenarios plus five HTTP-client load scenarios, all against PostgreSQL |
+| Full production build | Passed | `VERCEL=1 npm run build`, with no database binding needed during the build |
+| Standalone demo build | Passed | `npm run build:demo` |
+
+A smoke check of the final production bundle also passed for mobile joining, late joining, live membership and the host roster; phone and desktop screenshots were visually reviewed.
+
+78 automated cases passed. Tests cover 5, 10, 20, 40 and 60 individual identities, including uneven groups of N−4 / 1 / 1 / 1 / 1, late joins, independent private drafts, server-side revocation after moves, joining/switching locks, opt-in approval, representative changes, one-person delegations, manual roster entries, disconnected presence and reconnect. Simultaneous official submissions result in exactly one proposal for the delegation and round. Distinct subsequent command IDs and updated revisions do not bypass the rule.
+
+HTTP load tests use independent Playwright API contexts with individual cookies, not 60 rendered Android browsers. Each size includes actual API joins, parallel reads, parallel submission attempts and three subsequent snapshot-read bursts. These are short local development-server observations, not a sustained production benchmark:
+
+| Independent clients | Snapshot p50 | Snapshot p95 | Failed expected-success requests |
+| --- | --- | --- | --- |
+| 5 | 79 ms | 129 ms | 0 |
+| 10 | 143 ms | 199 ms | 0 |
+| 20 | 304 ms | 374 ms | 0 |
+| 40 | 555 ms | 1,017 ms | 0 |
+| 60 | 611 ms | 815 ms | 0 |
+
+Small samples and host scheduling explain non-monotonic timings; no capacity guarantee follows from them. Production Vercel/Neon latency, quotas and billing were not measured. There is no participant-count check in the application; infrastructure and rate limits still apply. At 60 active participants plus host/projector, two-second polling can approach 31 snapshots/second before network/server latency. See open-delegations.md for limits and scaling decisions.
+
+All covered axe checks passed, including the join cards, participant ideas and host roster. Responsive browser checks include 320 px through desktop. Passing automated checks does not establish full WCAG 2.2 AA conformance. Physical Android devices, manual screen readers and a classroom pilot remain outside this validation.
+
+
+Original live-session validation: 28 October 2026, Node 24, Next.js 16, Chromium and an isolated PostgreSQL 17 container.
 
 | Check                             | Outcome   | Scope                                                                                                                                                    |
 | --------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -72,7 +72,7 @@ test("teams and projector cannot control host actions", () => {
 test("all alternatives and combination are recorded, action/price/condition required", () => {
   let g = createGame("a", "t");
   g.phase = "CRISIS1";
-  for (const option of ["A", "B", "C", "MIX"])
+  for (const [i, option] of ["A", "B", "C", "MIX"].entries())
     g = act(
       g,
       {
@@ -83,7 +83,7 @@ test("all alternatives and combination are recorded, action/price/condition requ
         condition: "מימון",
         owner: "חינוך",
       },
-      team,
+      { kind: "team", role: (["MOE", "FIN", "UNION", "LOCAL"] as const)[i] },
     );
   assert.equal(g.proposals.length, 4);
   assert.throws(() => act(g, { type: "proposal", option: "D" }, team));

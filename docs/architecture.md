@@ -13,7 +13,7 @@ Next.js App Router / React / TypeScript. Hebrew Heebo font files are bundled loc
 
 Room storage in Vercel is shared PostgreSQL. `lib/store.ts` selects the PostgreSQL adapter lazily from DATABASE_URL / POSTGRES_URL; a configured Vercel instance never falls back to SQLite. Local development can retain the SQLite adapter. No database connection is needed at build time.
 
-PostgreSQL room changes use row-level `FOR UPDATE` locks and a command receipt table. A committed command, journal entry and revision update are one transaction across any number of function processes. Duplicate retries are scoped to their authenticated actor; a stale new command is rejected. Approved memberships have a partial unique index. The schema initializes under a PostgreSQL advisory transaction lock. Remote database TLS verifies the server certificate. Raw database diagnostics never reach the browser.
+PostgreSQL room changes use row-level `FOR UPDATE` locks and a command receipt table. A committed command, journal entry and revision update are one transaction across any number of function processes. Duplicate retries are scoped to their authenticated actor; a stale new command is rejected. Memberships are individual and have no per-role uniqueness constraint. The old approved-team unique index is removed automatically; see open-delegations.md for authorization and schema evolution. The schema initializes under a PostgreSQL advisory transaction lock. Remote database TLS verifies the server certificate. Raw database diagnostics never reach the browser.
 
 Authorized snapshots and presence are read through the server every two seconds, with immediate recovery reads on foreground/online events. No WebSocket or direct browser-to-database access is required. Superseded requests cannot restore stale screens, and revocation clears private screen content. Draft versioning rejects out-of-order autosaves in the PostgreSQL adapter. Unknown command responses can be retried with the same command ID instead of creating duplicate decisions.
 
@@ -25,7 +25,7 @@ The eight active phases total 60 minutes: 6 + 11 + 10 + 10 + 9 + 6 + 5 + 3. Only
 
 ## Recovery and retention
 
-Team forms save locally during input and to the server after a short debounce. A reconnect retrieves the current authorized snapshot. Drafts from previous phases remain in local storage; they are never silently submitted into a different phase. A stale write leaves the visible draft intact and asks the user to retry. Team replacement revokes the previous device and requires host approval.
+Team forms save locally during input and to the server after a short debounce. A reconnect retrieves the current authorized snapshot. Drafts from previous phases remain in local storage; they are never silently submitted into a different phase. A stale write leaves the visible draft intact and asks the user to retry. The same browser cookie reconnects its individual membership; joining is open by default. Moves and removals update server authorization immediately.
 
 Room deletion removes room state and memberships. Room data expires after 30 days: reads deny expired rooms and cleanup physically removes expired data on the next create/join action. Operators should schedule cleanup for installations requiring deletion at an exact wall-clock instant. Server backups must follow the same retention policy. Browser demo and draft storage can be cleared using browser site-data controls; do not use personal or child information.
 
@@ -46,7 +46,7 @@ No AI calls, external analytics, third-party fonts or source retrieval occur dur
 
 ## Manual acceptance checklist
 
-1. Play the full 60 minutes with ten teachers, one device per pair. Check reading load and whether authority concepts become clear through action.
+1. Play the full 60 minutes with varying group sizes and individual devices, including singleton and uneven delegations. Check reading load and whether authority concepts become clear through action.
 2. Use keyboard only, then VoiceOver, TalkBack and NVDA. Check dialogs, return focus, navigation, alerts, phase announcement and timers (never announced every second).
 3. Test 200% zoom, 400% reflow, 320/360/390 px, tablet landscape, mobile keyboard and reduced motion.
 4. Open projector from the host's browser: it must remain public-only. Verify low-contrast physical projection and distance readability.
@@ -54,3 +54,7 @@ No AI calls, external analytics, third-party fonts or source retrieval occur dur
 6. Try stale simultaneous writes and device replacement; the old device must lose access and current data must not be overwritten.
 7. Have a qualified education-administration reviewer verify all authority descriptions against current primary sources and scope; have an editor validate research summaries and original party sources. Keep unverified material labeled and do not invent citations.
 8. Confirm all source types, dates, limitations and fiction labels. Print a partial and completed report and verify that no confidential card, token or draft appears.
+
+## Open-delegation update
+
+Current membership requirements supersede the original pair-based source specification. See [open-delegations.md](open-delegations.md) for the roster, representative, privacy and capacity design. The story, all four crises, agreement and consequence rules remain in the existing engine.

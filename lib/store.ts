@@ -17,8 +17,13 @@ async function store() {
 export async function newRoom(name: string) {
   return (await store()).newRoom(name);
 }
-export async function joinRoom(code: string, role: Role) {
-  return (await store()).joinRoom(code, role);
+export async function joinRoom(
+  code: string,
+  role: Role,
+  name = "משתתפת",
+  credential = "",
+) {
+  return (await store()).joinRoom(code, role, name, credential);
 }
 export async function recover(code: string, key: string) {
   return (await store()).recover(code, key);
@@ -44,4 +49,8 @@ export async function command(
 }
 export async function checkDatabase() {
   return (await store()).checkDatabase();
+}
+
+export async function inspectRoom(code: string) {
+  return (await store()).inspectRoom(code);
 }

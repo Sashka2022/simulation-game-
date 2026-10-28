@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { readSnapshot, command, rateLimit } from "../../../../lib/store";
 import { error, originCheck } from "../../../../lib/http";
@@ -30,7 +31,15 @@ export async function POST(
   try {
     originCheck(req);
     const { id } = await params;
-    await rateLimit("room:" + id, 300);
+    await rateLimit(
+      "actor:" +
+        id +
+        ":" +
+        createHash("sha256")
+          .update(req.cookies.get("room_" + id)?.value || "anonymous")
+          .digest("hex"),
+      120,
+    );
     const raw = await req.text();
     if (raw.length > 30000) throw Error("בקשה גדולה מדי");
     const b = JSON.parse(raw);

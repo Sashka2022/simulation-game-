@@ -1,7 +1,7 @@
 import type { Game, Clause } from "./engine";
 import type { Phase, Role } from "./content";
 export const sceneSummaries: Record<Phase, string> = {
-  LOBBY: "כל זוג מצטרף למשלחת אחרת. המנחה מאשרת את הכניסה ומתחילות יחד.",
+  LOBBY: "כל משתתפת בוחרת משלחת ומצטרפת מיד. מכירות את התפקיד ומתחילות יחד.",
   OPENING:
     "ההבטחה: עד 25 תלמידים בכיתה בתוך שלוש שנים. שני בתי ספר מתחילים מנקודות פתיחה שונות.",
   CRISIS1:

@@ -121,8 +121,18 @@ test("host overview distinguishes submitted answers from presence and resets on 
     ).json();
     const api = "/api/room/" + room.id;
     let s = await (await host.request.get(api)).json();
+    await host.request.post("/api/room/" + room.id, {
+      data: {
+        commandId: crypto.randomUUID(),
+        revision: s.revision,
+        action: {
+          type: "membershipSettings",
+          settings: { approvalRequired: true },
+        },
+      },
+    });
     await team.request.post("/api/session", {
-      data: { type: "join", code: s.code, role: "MOE" },
+      data: { type: "join", name: "משתתפת", code: s.code, role: "MOE" },
     });
     s = await (await host.request.get(api)).json();
     await host.request.post(api, {
@@ -159,6 +169,7 @@ test("host overview distinguishes submitted answers from presence and resets on 
         revision: s.revision,
         action: {
           type: "proposal",
+          roleScope: "MOE",
           option: "B",
           action: "חונכות",
           price: "זמן",

@@ -4327,3 +4327,152 @@ legend {
     display: none;
   }
 }
+
+/* Open delegations: one visible task, personal ideas and a single official voice. */
+.delegation-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 16px 0;
+  min-width: 0;
+}
+.delegation-fieldset legend {
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+.delegation-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: 10px;
+}
+.delegation-choice {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 5px 10px;
+  border: 1px solid var(--line, #ccd5dc);
+  padding: 15px;
+  border-radius: 12px;
+  cursor: pointer;
+  background: #fff;
+}
+.delegation-choice.selected {
+  border: 2px solid #19716b;
+  background: #eff8f5;
+  padding: 14px;
+}
+.delegation-choice input {
+  width: 20px;
+  height: 20px;
+  grid-row: span 2;
+  margin: 3px 0;
+  accent-color: #19716b;
+}
+.delegation-choice span {
+  font-size: calc(14px * var(--text-scale, 1));
+  color: #4d6272;
+}
+.entry-dialog {
+  max-height: 92dvh;
+  overflow-y: auto;
+}
+.members-panel {
+  margin-bottom: 20px;
+}
+.members-panel > summary,
+.team-space summary {
+  font-weight: 700;
+  cursor: pointer;
+  padding: 10px 0;
+}
+.members-panel fieldset {
+  border: 1px solid #dce4e8;
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 0;
+}
+.members-panel .check-row {
+  display: flex;
+  flex-direction: row;
+  min-height: 44px;
+  gap: 12px;
+  align-items: center;
+  margin: 12px 0;
+}
+.check-row input {
+  min-height: 20px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+}
+.roster-group {
+  margin: 22px 0;
+}
+.roster-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #e4eaed;
+}
+.roster-row > div {
+  display: grid;
+  gap: 4px;
+  min-width: 120px;
+}
+.roster-row label {
+  margin: 0;
+  max-width: 230px;
+}
+.roster-row button {
+  min-height: 44px;
+}
+.team-space {
+  border-top: 4px solid #25877e;
+  margin-bottom: 24px;
+}
+.team-space h2 {
+  font-size: calc(20px * var(--text-scale, 1));
+}
+.team-space .idea-form textarea {
+  min-height: 86px;
+}
+.team-space details {
+  border-top: 1px solid #e0e8eb;
+  margin-top: 14px;
+}
+.team-idea {
+  border-inline-start: 3px solid #9accc2;
+  padding-inline-start: 14px;
+  margin: 16px 0;
+  overflow-wrap: anywhere;
+}
+.official-status {
+  background: #f1f6f7;
+  border-radius: 8px;
+  padding: 12px;
+}
+.join-panel a {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .roster-row {
+    align-items: stretch;
+  }
+  .roster-row > div,
+  .roster-row label {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .team-space .section-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+}
+.delegation-options {
+  margin-bottom: 20px;
+}
+.delegation-options > summary {
+  cursor: pointer;
+  font-weight: 700;
+  padding: 14px 0;
+}

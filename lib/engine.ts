@@ -41,7 +41,22 @@ export type Log = {
   at: number;
   text: string;
 };
+export type MembershipState = {
+  settings: import("./membership").Settings;
+  representatives: Partial<Record<Role, string>>;
+  revision?: number;
+  ideas: {
+    id: string;
+    memberId: string;
+    name: string;
+    team: Role;
+    phase: Phase;
+    text: string;
+    at: number;
+  }[];
+};
 export type Game = {
+  membership?: MembershipState;
   id: string;
   name: string;
   phase: Phase;
@@ -88,7 +103,11 @@ export type Game = {
   outcome?: ReturnType<typeof selectOutcome>;
 };
 export type Action = { type: string; [key: string]: unknown };
-export type Actor = { kind: "host" | "team" | "projector"; role?: Role };
+export type Actor = {
+  kind: "host" | "team" | "projector";
+  role?: Role;
+  memberId?: string;
+};
 export function createGame(id: string, name: string, now = Date.now()): Game {
   return {
     id,
@@ -283,6 +302,10 @@ export function applyCommand(
       const price = str(a.price);
       const condition = str(a.condition);
       need(action && price && condition, "מלאו הצעה, מחיר ותנאי");
+      need(
+        !g.proposals.some((p) => p.team === role && p.phase === g.phase),
+        "ההצעה הרשמית כבר הוגשה לסבב זה",
+      );
       g.proposals.push({
         id: commandId,
         team: role,

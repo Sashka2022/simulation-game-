@@ -64,11 +64,21 @@ test("live room: five isolated delegations, projector, concurrent updates and re
     expect(res.ok()).toBeTruthy();
     const room = await res.json();
     let s = await (await host.request.get("/api/room/" + room.id)).json();
+    await host.request.post("/api/room/" + room.id, {
+      data: {
+        commandId: crypto.randomUUID(),
+        revision: s.revision,
+        action: {
+          type: "membershipSettings",
+          settings: { approvalRequired: true },
+        },
+      },
+    });
     const code = s.code;
     const roles = ["MOE", "FIN", "UNION", "LOCAL", "PRINCIPALS"];
     for (let i = 0; i < 5; i++) {
       const join = await teams[i].request.post("/api/session", {
-        data: { type: "join", code, role: roles[i] },
+        data: { type: "join", name: "משתתפת", code, role: roles[i] },
       });
       expect(join.ok()).toBeTruthy();
       const pending = await teams[i].request.get("/api/room/" + room.id);
@@ -177,7 +187,7 @@ test("live room: five isolated delegations, projector, concurrent updates and re
   }
 });
 
-test("agreement versions publish explicitly, one final revision, code rotation and CSRF", async ({
+test("agreement versions publish explicitly, one final revision, stable invitation and CSRF", async ({
   browser,
 }) => {
   const c = await browser.newContext();
@@ -197,9 +207,16 @@ test("agreement versions publish explicitly, one final revision, code rotation a
       });
     };
     const old = s.code;
-    expect((await command({ type: "rotate" })).ok()).toBeTruthy();
+    expect(
+      (
+        await command({
+          type: "membershipSettings",
+          settings: { joinOpen: false },
+        })
+      ).ok(),
+    ).toBeTruthy();
     s = await read();
-    expect(s.code).not.toBe(old);
+    expect(s.code).toBe(old);
     const attack = await c.request.post("/api/room/" + room.id, {
       headers: { Origin: "https://untrusted.example" },
       data: {
@@ -366,9 +383,19 @@ test("seven live screens converge after offline recovery; revoked device loses p
     const read = async () => (await host.request.get(url)).json();
     let s = await read();
     const roles = ["MOE", "FIN", "UNION", "LOCAL", "PRINCIPALS"];
+    await host.request.post("/api/room/" + room.id, {
+      data: {
+        commandId: crypto.randomUUID(),
+        revision: s.revision,
+        action: {
+          type: "membershipSettings",
+          settings: { approvalRequired: true },
+        },
+      },
+    });
     for (let i = 0; i < roles.length; i++) {
       await teams[i].request.post("/api/session", {
-        data: { type: "join", code: s.code, role: roles[i] },
+        data: { type: "join", name: "משתתפת", code: s.code, role: roles[i] },
       });
       s = await read();
       const r = s.requests.find((r: { role: string }) => r.role === roles[i]);
@@ -433,7 +460,12 @@ test("seven live screens converge after offline recovery; revoked device loses p
       data: {
         commandId: crypto.randomUUID(),
         revision: s.revision,
-        action: { type: "revoke", role: "MOE" },
+        action: {
+          type: "removeMember",
+          memberId: s.membership.members.find(
+            (m: { role: string }) => m.role === "MOE",
+          ).id,
+        },
       },
     });
     await expect(
@@ -455,7 +487,7 @@ test("seven live screens converge after offline recovery; revoked device loses p
   }
 });
 
-test("a lost command response retries the same operation without a duplicate proposal", async ({
+test("a lost command response recovers the saved proposal without a duplicate submission", async ({
   browser,
 }) => {
   const host = await browser.newContext(),
@@ -468,8 +500,18 @@ test("a lost command response retries the same operation without a duplicate pro
     ).json();
     const url = "/api/room/" + room.id;
     let s = await (await host.request.get(url)).json();
+    await host.request.post("/api/room/" + room.id, {
+      data: {
+        commandId: crypto.randomUUID(),
+        revision: s.revision,
+        action: {
+          type: "membershipSettings",
+          settings: { approvalRequired: true },
+        },
+      },
+    });
     await team.request.post("/api/session", {
-      data: { type: "join", code: s.code, role: "MOE" },
+      data: { type: "join", name: "משתתפת", code: s.code, role: "MOE" },
     });
     s = await (await host.request.get(url)).json();
     await host.request.post(url, {
@@ -522,9 +564,13 @@ test("a lost command response retries the same operation without a duplicate pro
         .getByRole("alert")
         .filter({ hasText: "החיבור למשחק אינו זמין כרגע" }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "שליחת העמדה" }).click();
-    await expect.poll(() => ids.length).toBe(2);
-    expect(ids[0]).toBe(ids[1]);
+    await expect(page.locator(".official-status")).toContainText(
+      "הוגשה לסבב הנוכחי",
+    );
+    await expect(
+      page.getByRole("button", { name: "שליחת העמדה" }),
+    ).not.toBeVisible();
+    expect(ids).toHaveLength(1);
     s = await (await host.request.get(url)).json();
     expect(s.proposals).toHaveLength(1);
     expect(s.proposals[0].action).toBe("תוכנית שימור חד פעמית");

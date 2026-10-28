@@ -15,6 +15,13 @@ import { randomUUID } from "node:crypto";
 const rooms: string[] = [];
 async function room() {
   const r = await newRoom("בדיקת סנכרון");
+  await command(
+    r.id,
+    r.host,
+    { type: "membershipSettings", settings: { approvalRequired: true } },
+    randomUUID(),
+    0,
+  );
   rooms.push(r.id);
   return r;
 }
@@ -70,10 +77,22 @@ test("PostgreSQL isolates teams, rooms and projector, including a host cookie", 
   assert.ok(!("privateCards" in p));
   await assert.rejects(readSnapshot(other.id, moe.key), /הרשאה/);
   await assert.rejects(
-    command(r.id, moe.key, { type: "start" }, randomUUID(), 0),
+    command(
+      r.id,
+      moe.key,
+      { type: "start", roleScope: "MOE" },
+      randomUUID(),
+      0,
+    ),
     /בלבד/,
   );
-  await command(r.id, r.host, { type: "revoke", role: "MOE" }, randomUUID(), 0);
+  await command(
+    r.id,
+    r.host,
+    { type: "removeMember", memberId: m.actor.memberId },
+    randomUUID(),
+    0,
+  );
   await assert.rejects(readSnapshot(r.id, moe.key), /הרשאה/);
 });
 test("independent server processes deliver a retried command exactly once", async () => {
@@ -166,14 +185,24 @@ test("draft ordering and host recovery survive process boundaries", async () => 
   await command(
     r.id,
     team.key,
-    { type: "draft", draft: { action: "new" }, draftVersion: 200 },
+    {
+      type: "draft",
+      roleScope: "LOCAL",
+      draft: { action: "new" },
+      draftVersion: 200,
+    },
     randomUUID(),
     0,
   );
   await command(
     r.id,
     team.key,
-    { type: "draft", draft: { action: "old" }, draftVersion: 100 },
+    {
+      type: "draft",
+      roleScope: "LOCAL",
+      draft: { action: "old" },
+      draftVersion: 100,
+    },
     randomUUID(),
     0,
   );

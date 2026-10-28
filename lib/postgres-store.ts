@@ -9,7 +9,16 @@ import {
   type Game,
 } from "./engine";
 import { roles, type Role } from "./content";
-import { secrets } from "./private";
+import {
+  memberName,
+  settings,
+  initialize,
+  manage,
+  managementTypes,
+  authorizeTeam,
+  view,
+  type Member as NormalMember,
+} from "./membership";
 import { ServiceError } from "./errors";
 
 type DB = Sql | TransactionSql;
@@ -23,6 +32,9 @@ type Room = {
   created: number | string;
 };
 type Member = {
+  name: string;
+  manual: boolean;
+  focus: "BOTH" | "NEGOTIATION" | "POLICY";
   token: string;
   room: string;
   role: Role;
@@ -77,7 +89,10 @@ async function ready() {
         await tx`SELECT pg_advisory_xact_lock(721603410)`;
         await tx`CREATE TABLE IF NOT EXISTS hd_rooms (id text PRIMARY KEY, code text NOT NULL UNIQUE, state jsonb NOT NULL, host text NOT NULL, projector text NOT NULL, recovery text NOT NULL, created bigint NOT NULL)`;
         await tx`CREATE TABLE IF NOT EXISTS hd_members (token text PRIMARY KEY, room text NOT NULL REFERENCES hd_rooms(id) ON DELETE CASCADE, role text NOT NULL CHECK(role IN ('MOE','FIN','UNION','LOCAL','PRINCIPALS')), approved boolean NOT NULL DEFAULT false, lastseen bigint NOT NULL, draft jsonb, draft_version bigint NOT NULL DEFAULT 0)`;
-        await tx`CREATE UNIQUE INDEX IF NOT EXISTS hd_one_approved_team ON hd_members(room,role) WHERE approved`;
+        await tx`DROP INDEX IF EXISTS hd_one_approved_team`;
+        await tx`ALTER TABLE hd_members ADD COLUMN IF NOT EXISTS name text NOT NULL DEFAULT 'משתתפת'`;
+        await tx`ALTER TABLE hd_members ADD COLUMN IF NOT EXISTS manual boolean NOT NULL DEFAULT false`;
+        await tx`ALTER TABLE hd_members ADD COLUMN IF NOT EXISTS focus text NOT NULL DEFAULT 'BOTH'`;
         await tx`CREATE INDEX IF NOT EXISTS hd_members_room ON hd_members(room)`;
         await tx`CREATE INDEX IF NOT EXISTS hd_rooms_created ON hd_rooms(created)`;
         await tx`CREATE TABLE IF NOT EXISTS hd_limits (key text PRIMARY KEY, count integer NOT NULL, until bigint NOT NULL)`;
@@ -111,8 +126,8 @@ async function identity(
     Member[]
   >`SELECT * FROM hd_members WHERE token=${hash(credential)} AND room=${room.id}`;
   if (!m) throw Error("אין הרשאה למפגש");
-  if (!m.approved) throw Error("PENDING");
   await sql`UPDATE hd_members SET lastseen=${Date.now()} WHERE token=${m.token}`;
+  if (!m.approved) throw Error("PENDING");
   return { kind: "team", role: m.role };
 }
 export async function cleanup() {
@@ -150,7 +165,13 @@ export async function newRoom(name: string) {
     return { id, code, host, projector, recovery };
   });
 }
-export async function joinRoom(code: string, role: Role) {
+export async function joinRoom(
+  code: string,
+  role: Role,
+  name = "משתתפת",
+  credential = "",
+) {
+  name = memberName(name);
   if (!roles.some((t) => t.id === role)) throw Error("בחרו משלחת");
   const sql = await ready();
   return sql.begin(async (tx) => {
@@ -159,14 +180,20 @@ export async function joinRoom(code: string, role: Role) {
     >`SELECT * FROM hd_rooms WHERE code=${code.toUpperCase()} FOR UPDATE`;
     const room = validRoom(row);
     if (room.state.phase === "COMPLETE") throw Error("המפגש הסתיים");
-    if (
-      (
-        await tx`SELECT token FROM hd_members WHERE room=${room.id} AND role=${role} AND approved`
-      ).length
-    )
-      throw Error("המשלחת תפוסה. בקשו מהמנחה לאשר החלפת מכשיר.");
+    if (hash(credential) === room.host) return { id: room.id, key: credential };
+    const [existing] = await tx<
+      Member[]
+    >`SELECT * FROM hd_members WHERE room=${room.id} AND token=${hash(credential)}`;
+    if (existing) return { id: room.id, key: credential };
+    if (!settings(room.state).joinOpen) throw Error("ההצטרפות למפגש נעולה");
     const key = token();
-    await tx`INSERT INTO hd_members(token,room,role,lastseen) VALUES(${hash(key)},${room.id},${role},${Date.now()})`;
+    const approved = !settings(room.state).approvalRequired;
+    await tx`INSERT INTO hd_members(token,room,role,name,approved,lastseen) VALUES(${hash(key)},${room.id},${role},${name},${approved},${Date.now()})`;
+    const rows = await tx<
+      Member[]
+    >`SELECT * FROM hd_members WHERE room=${room.id}`;
+    initialize(room.state, normalize(rows));
+    await tx`UPDATE hd_rooms SET state=${tx.json(room.state as unknown as postgres.JSONValue)} WHERE id=${room.id}`;
     return { id: room.id, key };
   });
 }
@@ -185,50 +212,7 @@ export async function readSnapshot(
     const members = await tx<
       Member[]
     >`SELECT * FROM hd_members WHERE room=${id}`;
-    const g = r.state;
-    const base = {
-      ...g,
-      processed: [],
-      actor,
-      serverNow: Date.now(),
-      teams: roles.map((t) => ({
-        role: t.id,
-        joined: members.some((m) => m.role === t.id && m.approved),
-        connected: members.some(
-          (m) =>
-            m.role === t.id &&
-            m.approved &&
-            Number(m.lastseen) > Date.now() - 15000,
-        ),
-      })),
-    };
-    if (actor.kind === "host")
-      return {
-        ...base,
-        code: r.code,
-        requests: members
-          .filter((m) => !m.approved)
-          .map((m) => ({ id: m.token, role: m.role })),
-        privateCards: secrets,
-      };
-    if (actor.kind === "team")
-      return {
-        ...base,
-        privateCard: secrets[actor.role!],
-        draft: members.find((m) => m.token === hash(credential))?.draft || null,
-      };
-    return {
-      ...base,
-      clauses: g.clauses.filter((c) => c.published),
-      history: [],
-      proposals: [],
-      authorityMaps: [],
-      practice: [],
-      reflections: [],
-      logs: [],
-      consents: [],
-      shared: [],
-    };
+    return view(r.state, normalize(members), actor, hash(credential), r.code);
   });
 }
 export async function command(
@@ -251,25 +235,27 @@ export async function command(
       if (receipt.actor !== hash(credential)) throw Error("אין הרשאה לפקודה");
       return;
     }
+    const rows = await tx<Member[]>`SELECT * FROM hd_members WHERE room=${id}`;
+    initialize(r.state, normalize(rows));
+    authorizeTeam(r.state, actor, hash(credential), a);
     if (a.type === "rotate") {
       if (actor.kind !== "host") throw Error("למנחה בלבד");
-      await tx`SELECT pg_advisory_xact_lock(721603411)`;
-      let code = "";
-      do {
-        code = randomBytes(4).toString("hex").slice(0, 6).toUpperCase();
-      } while ((await tx`SELECT id FROM hd_rooms WHERE code=${code}`).length);
-      await tx`UPDATE hd_rooms SET code=${code} WHERE id=${id}`;
-    } else if (a.type === "approve" || a.type === "revoke") {
-      if (actor.kind !== "host") throw Error("למנחה בלבד");
-      if (a.type === "approve") {
-        const [m] = await tx<
-          Member[]
-        >`SELECT * FROM hd_members WHERE token=${String(a.memberId)} AND room=${id}`;
-        if (!m) throw Error("הבקשה לא נמצאה");
-        await tx`DELETE FROM hd_members WHERE room=${id} AND role=${m.role} AND token<>${m.token}`;
-        await tx`UPDATE hd_members SET approved=true WHERE token=${m.token}`;
-      } else
-        await tx`DELETE FROM hd_members WHERE room=${id} AND role=${String(a.role)}`;
+      throw Error("קישור ההצטרפות קבוע למפגש. אפשר לנעול הצטרפות בהגדרות");
+    } else if (managementTypes.includes(a.type)) {
+      const members = normalize(rows);
+      const previous = new Map(normalize(rows).map((m) => [m.token, m]));
+      initialize(r.state, members);
+      authorizeTeam(r.state, actor, hash(credential), a);
+      manage(r.state, members, a, actor, hash(credential), hash(token()));
+      for (const old of rows)
+        if (!members.some((m) => m.token === old.token))
+          await tx`DELETE FROM hd_members WHERE token=${old.token}`;
+      for (const m of members) {
+        const old = previous.get(m.token);
+        if (old && JSON.stringify(old) === JSON.stringify(m)) continue;
+        await tx`INSERT INTO hd_members(token,room,role,name,approved,lastseen,draft,manual,focus) VALUES(${m.token},${id},${m.role},${m.name},${m.approved},${m.lastseen},${m.draft ? tx.json(m.draft as postgres.JSONValue) : null},${!!m.manual},${m.focus || "BOTH"}) ON CONFLICT(token) DO UPDATE SET role=EXCLUDED.role,name=EXCLUDED.name,approved=EXCLUDED.approved,draft=EXCLUDED.draft,focus=EXCLUDED.focus`;
+      }
+      await tx`UPDATE hd_rooms SET state=${tx.json(r.state as unknown as postgres.JSONValue)} WHERE id=${id}`;
     } else if (a.type === "draft") {
       if (actor.kind !== "team") throw Error("למשלחת בלבד");
       const text = JSON.stringify(a.draft);
@@ -312,4 +298,30 @@ export async function closeDatabase() {
   if (client) await client.end({ timeout: 2 });
   client = undefined;
   initialized = undefined;
+}
+
+function normalize(rows: Member[]): NormalMember[] {
+  return rows.map((m) => ({
+    ...m,
+    lastseen: Number(m.lastseen),
+    name: m.name || "משתתפת",
+  }));
+}
+export async function inspectRoom(code: string) {
+  const sql = await ready();
+  const [row] = await sql<
+    Room[]
+  >`SELECT * FROM hd_rooms WHERE code=${code.toUpperCase()}`;
+  const r = validRoom(row);
+  const counts =
+    await sql`SELECT role,count(*)::int AS count FROM hd_members WHERE room=${r.id} AND approved GROUP BY role`;
+  return {
+    id: r.id,
+    name: r.state.name,
+    settings: settings(r.state),
+    teams: roles.map((t) => ({
+      role: t.id,
+      count: Number(counts.find((c) => c.role === t.id)?.count || 0),
+    })),
+  };
 }

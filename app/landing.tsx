@@ -26,6 +26,39 @@ export default function Landing() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [joinCode, setJoinCode] = useState("");
+  const [selectedRole, setSelectedRole] = useState("MOE");
+  const [joinInfo, setJoinInfo] = useState<{
+    teams: { role: string; count: number }[];
+    settings: { joinOpen: boolean };
+  } | null>(null);
+  const [joinInfoError, setJoinInfoError] = useState("");
+  useEffect(() => {
+    if (mode !== "join" || joinCode.length !== 6) {
+      setJoinInfo(null);
+      return;
+    }
+    let active = true;
+    const read = () =>
+      fetch("/api/session?code=" + encodeURIComponent(joinCode), {
+        cache: "no-store",
+      })
+        .then(async (r) => {
+          const b = await r.json();
+          if (active) {
+            setJoinInfo(r.ok ? b : null);
+            setJoinInfoError(r.ok ? "" : b.error);
+          }
+        })
+        .catch(() => {
+          if (active) setJoinInfoError("לא ניתן לבדוק את המפגש כרגע");
+        });
+    read();
+    const interval = setInterval(read, 8000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [mode, joinCode]);
   const [liveAvailable, setLiveAvailable] = useState<boolean | null>(null);
   useEffect(() => {
     let active = true;
@@ -142,7 +175,7 @@ export default function Landing() {
               <i />
               <span>
                 <Users size={17} />
-                10 משתתפות
+                מספר משתתפות גמיש
               </span>
               <i />
               <span>
@@ -247,7 +280,7 @@ export default function Landing() {
                 n: "01",
                 icon: Users,
                 title: "נכנסות לנעליים אחרות",
-                text: "כל זוג מייצג גוף במערכת החינוך, עם מטרות, מידע ושיקולים משלו.",
+                text: "כל משלחת מייצגת גוף במערכת החינוך, עם מטרות, מידע ושיקולים משלו.",
               },
               {
                 n: "02",
@@ -396,7 +429,8 @@ export default function Landing() {
                   <input
                     autoFocus
                     name="code"
-                    defaultValue={joinCode}
+                    value={joinCode}
+                    onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                     dir="ltr"
                     required
                     maxLength={6}
@@ -406,16 +440,51 @@ export default function Landing() {
                 </label>
               )}
               {mode === "join" && (
-                <label>
-                  המשלחת שלנו
-                  <select name="role">
-                    {publicRoles.map((r) => (
-                      <option value={r.id} key={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <>
+                  <label>
+                    שם או כינוי
+                    <input
+                      name="name"
+                      required
+                      maxLength={60}
+                      autoComplete="nickname"
+                      placeholder="איך קוראים לך?"
+                    />
+                  </label>
+                  <fieldset className="delegation-fieldset">
+                    <legend>בחרי משלחת</legend>
+                    <div className="delegation-cards">
+                      {publicRoles.map((r) => (
+                        <label
+                          className={
+                            "delegation-choice " +
+                            (selectedRole === r.id ? "selected" : "")
+                          }
+                          key={r.id}
+                        >
+                          <input
+                            type="radio"
+                            name="role"
+                            value={r.id}
+                            checked={selectedRole === r.id}
+                            onChange={() => setSelectedRole(r.id)}
+                          />
+                          <strong>{r.name}</strong>
+                          <span>
+                            {joinInfo
+                              ? (joinInfo.teams.find((t) => t.role === r.id)
+                                  ?.count || 0) + " משתתפות"
+                              : "ממתינות לקוד מפגש"}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  {joinInfoError && <p role="status">{joinInfoError}</p>}
+                  {joinInfo && !joinInfo.settings.joinOpen && (
+                    <p role="status">ההצטרפות כרגע נעולה בידי המנחה.</p>
+                  )}
+                </>
               )}
               {mode === "recover" && (
                 <label>
@@ -433,7 +502,14 @@ export default function Landing() {
                   {error}
                 </p>
               )}
-              <button className="btn primary full-width" disabled={busy}>
+              <button
+                className="btn primary full-width"
+                disabled={
+                  busy ||
+                  (mode === "join" &&
+                    (!joinInfo || !joinInfo.settings.joinOpen))
+                }
+              >
                 {busy ? (
                   <LoaderCircle className="spin" />
                 ) : (
@@ -443,13 +519,15 @@ export default function Landing() {
                   ? "רגע, מכינות הכול…"
                   : mode === "host"
                     ? "יצירת מפגש"
-                    : "המשך"}
+                    : mode === "join"
+                      ? "כניסה למשלחת"
+                      : "המשך"}
               </button>
             </form>
             <p className="dialog-footnote">
               {mode === "host"
                 ? "אין צורך בחשבונות אישיים למשתתפות."
-                : "המידע החסוי ייחשף רק אחרי אישור המנחה."}
+                : "בחרי משלחת והיכנסי. אין צורך בחשבון או באישור, אלא אם המנחה הפעילה מצב אישור."}
             </p>
             <button
               className="link-button"

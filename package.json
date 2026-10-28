@@ -11,7 +11,9 @@
     "test:e2e": "playwright test",
     "build:demo": "node scripts/build-demo.mjs",
     "test:postgres": "node --conditions=react-server --import tsx --test tests/postgres.integration.ts",
-    "test:configuration": "node --conditions=react-server --import tsx --test tests/config.integration.ts"
+    "test:configuration": "node --conditions=react-server --import tsx --test tests/config.integration.ts",
+    "test:members": "node --conditions=react-server --import tsx --test tests/membership.integration.ts",
+    "test:migration": "node --conditions=react-server --import tsx --test tests/migration.integration.ts"
   },
   "dependencies": {
     "@fontsource/heebo": "^5.3.0",
